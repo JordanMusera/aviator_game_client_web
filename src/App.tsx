@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import ActivationPage from './pages/ActivationPage';
+import GamePlayPage from "./pages/GamePlayPage";
 
 const App: React.FC = () => {
     return (
@@ -8,6 +9,7 @@ const App: React.FC = () => {
             <Routes>
                 <Route path="/" element={<Navigate to="/activation" replace />} />
                 <Route path="/activation" element={<ActivationPage />} />
+                <Route path="/game/play" element={<GamePlayPage/>} />
                 <Route
                     path="*"
                     element={
