@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { socket } from '../services/socket';
+import {localSocket, remoteSocket} from "../services/socket";
+import {api_url, remote_url} from "../constants/api";
+import {pc_id} from "../services/socket";
+import {useNavigate} from "react-router-dom";
 
 interface MouseState {
     id: string;
@@ -7,32 +10,54 @@ interface MouseState {
 }
 
 const ActivationPage: React.FC = () => {
-    const [pcid,setPcId] = useState("null");
     const [mice, setMice] = useState<Record<string, MouseState>>({});
-    const [connected, setConnected] = useState(socket.connected);
-    const [activationCode,setActivationCode] = useState("00000");
+    const [miceIds,setMiceIds] = useState<string[]>([]);
+    const [connected, setConnected] = useState(localSocket.connected);
+    const [activationCode, setActivationCode] = useState("00000");
+
+    const navigate = useNavigate();
+
+    const getActivationCode = async () => {
+        try {
+            const response = await fetch(`${api_url}/getActivationCode`);
+            const data = await response.json();
+            setActivationCode(data.code);
+        } catch (error) {
+            console.error("Failed to fetch code", error);
+        }
+    };
 
     useEffect(() => {
-        if (connected) {
-            getActivationCode();
-        }
+        if (connected) getActivationCode();
+
         const onConnect = () => setConnected(true);
-        const onDisconnect = () => { setConnected(false); setMice({}); };
+        const onDisconnect = () => {
+            setConnected(false);
+            setMice({});
+        };
 
         const onStatus = (data: { event: string; id: string }) => {
             if (data.event === 'connected') {
                 setMice(prev => ({ ...prev, [data.id]: { id: data.id, isPressed: false } }));
+                setMiceIds(prev => {
+                    if (prev.includes(data.id)) return prev;
+                    return [...prev, data.id];
+                });
             } else {
                 setMice(prev => {
                     const next = { ...prev };
                     delete next[data.id];
                     return next;
                 });
+                setMiceIds(prev => prev.filter(mid => mid !== data.id));
             }
         };
 
         const onClick = (data: { id: string }) => {
-            setMice(prev => ({ ...prev, [data.id]: { ...prev[data.id], isPressed: true } }));
+            setMice(prev => {
+                if (!prev[data.id]) return prev;
+                return { ...prev, [data.id]: { ...prev[data.id], isPressed: true } };
+            });
             setTimeout(() => {
                 setMice(prev => {
                     if (!prev[data.id]) return prev;
@@ -41,50 +66,64 @@ const ActivationPage: React.FC = () => {
             }, 100);
         };
 
-        const getPcStats=(data:{pcId: string})=>{
-            setPcId(data.pcId);
-        }
-
-        const handleActivation = async (data:any) => {
-            console.log('Device activated!', data);
-            localStorage.setItem('deviceId', data.deviceId);
+        const handleActivation = async (data: any) => {
+            console.log(data);
             localStorage.setItem('stationName', data.stationName);
             localStorage.setItem('stationId', data.stationId);
 
             try {
-                await fetch('http://localhost:5000/api/v1/device/login-device', {
+                const request = await fetch(`${remote_url}/api/v1/device/login-device`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
                     body: JSON.stringify({ deviceId: data.deviceId })
                 });
+
+                const data1 = await request.json();
+                if(request.ok){
+                    if(data1.success){
+                        localStorage.setItem('token',data1.token);
+                    }
+                }
+
+                const registerMice = await fetch(`${remote_url}/api/v1/device/add-mouse`,{
+                    method:'POST',
+                    headers:{
+                        'Content-Type':'application/json',
+                        'Authorization': 'Bearer '+data1.token
+                    },
+                    credentials:'include',
+                    body: JSON.stringify({
+                        mice:miceIds
+                    })
+                })
+
+                const data2 = await registerMice.json();
+
+                if(registerMice.ok){
+                    console.log(data2)
+                }
+
+                navigate('/game/play');
             } catch (error) {
                 console.error("Login failed", error);
             }
         };
 
-        socket.on('connect', onConnect);
-        socket.on('disconnect', onDisconnect);
-        socket.on('status', onStatus);
-        socket.on('click', onClick);
-        socket.on("pc_stats",getPcStats);
-        socket.on('deviceActivated', handleActivation);
+        localSocket.on('connect', onConnect);
+        localSocket.on('disconnect', onDisconnect);
+        localSocket.on('status', onStatus);
+        localSocket.on('click', onClick);
+        remoteSocket.on('deviceActivated', handleActivation);
 
         return () => {
-            socket.off('connect', onConnect);
-            socket.off('disconnect', onDisconnect);
-            socket.off('status', onStatus);
-            socket.off('click', onClick);
-            socket.off("pc_stats",getPcStats);
-            socket.off('deviceActivated', handleActivation);
+            localSocket.off('connect', onConnect);
+            localSocket.off('disconnect', onDisconnect);
+            localSocket.off('status', onStatus);
+            localSocket.off('click', onClick);
+            remoteSocket.off('deviceActivated', handleActivation);
         };
     }, [connected]);
-
-    const getActivationCode=async()=>{
-        const response = await fetch("http://localhost:5000/getActivationCode");
-        const data = await response.json();
-        setActivationCode(data.code);
-    }
 
     return (
         <div className="h-screen bg-[#1e293b] text-slate-200 font-sans flex flex-col overflow-hidden">
@@ -116,7 +155,7 @@ const ActivationPage: React.FC = () => {
                         <p className="text-emerald-400 text-xs font-black uppercase tracking-widest drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]">
                             Please use PIN above to activate this device!
                         </p>
-                        <p className="text-md font-bold animate-pulse mt-2">{pcid}</p>
+                        <p className="text-md font-bold animate-pulse mt-2">{pc_id}</p>
                     </div>
                 </div>
             </div>

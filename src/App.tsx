@@ -1,7 +1,9 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import ActivationPage from './pages/ActivationPage';
 import GamePlayPage from "./pages/GamePlayPage";
+
+
 
 const App: React.FC = () => {
     return (
