@@ -1,0 +1,238 @@
+using UnityEngine;
+using UnityEngine.InputSystem;
+using System.Collections;
+using TMPro;
+using UnityEngine.SceneManagement;
+
+public class rocketScript : MonoBehaviour
+{
+    public enum GameState { Waiting, Betting, InFlight, FlyAway }
+    public GameState currentState = GameState.Waiting;
+
+    [Header("UI Components")]
+    public TextMeshProUGUI statusText;
+    public TextMeshProUGUI multiplierText; // DRAG YOUR MAIN UI MULTIPLIER TEXT HERE
+
+    [Header("Components")]
+    public Rigidbody2D rb;
+    public ParticleSystem engineFire;
+    private Camera mainCam;
+
+    [Header("Robot Drop Settings")]
+    [Tooltip("Drag the 'robotRb' prefab from your Project folder here")]
+    public GameObject robotRb;
+    public float ejectionForce = 5f;
+
+    [Header("Graph Settings")]
+    public GameObject graphObject;
+
+    [Header("Pivoted Sway Settings")]
+    [Tooltip("Strictly caps the max rotation degrees (e.g., 1.0)")]
+    public float swayAmount = 1.0f;
+    public float swaySpeed = 0.5f;
+    public float rotationDelay = 5f;
+    private Quaternion initialRotation;
+
+    [Header("Marked Position Settings")]
+    public Vector3 markedPosition = new Vector3(3.95f, 0.96f, 0f);
+    public float transitionSpeed = 10f;
+
+    [Header("Movement Settings")]
+    public float forwardSpeed = 5f;
+    public float upSpeed = 4f;
+    public float stopClimbY = 10f;
+
+    [Header("Multiplier Settings")]
+    public float multiplierGrowth = 0.15f; // Adjust how fast the numbers go up
+    private float currentMultiplier = 1.00f;
+
+    [Header("Aviator Smooth Dance")]
+    public float danceIntensity = 0.05f;
+    public float danceSpeed = 2f;
+    public float danceDelay = 2f;
+
+    [Header("Fly Away Settings")]
+    public float minCrashX = 50f;
+    public float maxCrashX = 200f;
+    public float flyAwaySpeedMultiplier = 20f;
+
+    private float randomCrashPoint;
+    private bool isFlying = false;
+    private bool isTransitioning = false;
+    private bool isFlyingAway = false;
+    private bool isCameraFollowing = false;
+    private float flightTimer = 0f;
+    private Vector3 cameraOffset;
+
+    void Start()
+    {
+        mainCam = Camera.main;
+        if (rb == null) rb = GetComponent<Rigidbody2D>();
+        if (rb != null) rb.gravityScale = 0;
+        randomCrashPoint = Random.Range(minCrashX, maxCrashX);
+        if (engineFire != null) engineFire.Play();
+
+        // Initialize Multiplier Display
+        if (multiplierText != null) multiplierText.text = "1.00x";
+
+        UpdateState(GameState.Waiting);
+    }
+
+    void Update()
+    {
+        if (Keyboard.current.sKey.wasPressedThisFrame) RestartScene();
+
+        // Input Handling
+        if (Keyboard.current.spaceKey.wasPressedThisFrame)
+        {
+            if (currentState == GameState.Waiting)
+                UpdateState(GameState.Betting);
+            else if (currentState == GameState.Betting && !isTransitioning)
+                StartCoroutine(MoveToPositionAndLock());
+            else if (currentState == GameState.InFlight)
+                // Spawns robot with the CURRENT streaming multiplier value
+                SpawnRobotWithText(currentMultiplier.ToString("F2") + "x");
+        }
+
+        if (isFlying)
+        {
+            flightTimer += Time.deltaTime;
+
+            // Check for Crash/FlyAway point
+            if (transform.position.x >= randomCrashPoint && !isFlyingAway) StartFlyAway();
+
+            // Calculate Velocity
+            float speedX = isFlyingAway ? forwardSpeed * flyAwaySpeedMultiplier : forwardSpeed;
+            float speedY = isFlyingAway ? upSpeed * 2f : (transform.position.y < stopClimbY ? upSpeed : 0);
+
+            if (rb != null) rb.linearVelocity = new Vector2(speedX, speedY);
+
+            // Update the streaming multiplier numbers
+            if (!isFlyingAway) UpdateStreamingMultiplier();
+
+            // Apply Visuals
+            if (flightTimer >= danceDelay && !isFlyingAway) ApplyGentleFloat();
+
+            // Apply Strictly Capped Sway
+            if (flightTimer >= rotationDelay && !isFlyingAway) ApplyPivotedSway();
+        }
+    }
+
+    // Function to handle the live multiplier text stream
+    void UpdateStreamingMultiplier()
+    {
+        // Exponential-style growth formula
+        currentMultiplier += Time.deltaTime * (multiplierGrowth * currentMultiplier);
+
+        if (multiplierText != null)
+        {
+            // "F2" ensures exactly two decimal places (e.g. 1.50x)
+            multiplierText.text = currentMultiplier.ToString("F2") + "x";
+        }
+    }
+
+    public void SpawnRobotWithText(string message)
+    {
+        if (robotRb == null) return;
+
+        GameObject robotInstance = Instantiate(robotRb, transform.position, Quaternion.identity);
+
+        TextMeshProUGUI robotText = robotInstance.GetComponentInChildren<TextMeshProUGUI>();
+        if (robotText != null)
+        {
+            robotText.text = message;
+        }
+
+        Rigidbody2D robotBody = robotInstance.GetComponent<Rigidbody2D>();
+        if (robotBody != null)
+        {
+            robotBody.bodyType = RigidbodyType2D.Dynamic;
+            robotBody.gravityScale = 1.5f;
+            Vector2 pushDir = new Vector2(Random.Range(-2f, -1f), Random.Range(-0.5f, 0.5f));
+            robotBody.AddForce(pushDir * ejectionForce, ForceMode2D.Impulse);
+            robotBody.AddTorque(Random.Range(-15f, 15f));
+        }
+
+        Destroy(robotInstance, 5f);
+    }
+
+    void ApplyPivotedSway()
+    {
+        float t = (Mathf.Sin((Time.time - rotationDelay) * swaySpeed) * 0.5f) + 0.5f;
+        Quaternion targetRotation = initialRotation * Quaternion.Euler(0, 0, -swayAmount);
+        transform.localRotation = Quaternion.Lerp(initialRotation, targetRotation, t);
+    }
+
+    public void RestartScene() => SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+
+    void UpdateState(GameState newState)
+    {
+        currentState = newState;
+        if (statusText == null) return;
+        statusText.color = Color.white;
+        switch (currentState)
+        {
+            case GameState.Waiting: statusText.text = "WAITING NEW ROUND"; break;
+            case GameState.Betting: statusText.text = "BETTING"; break;
+            case GameState.InFlight: statusText.text = "FLYING"; break;
+            case GameState.FlyAway: statusText.text = "FLEW AWAY!"; break;
+        }
+    }
+
+    void LateUpdate()
+    {
+        if (isCameraFollowing && !isFlyingAway && mainCam != null)
+            mainCam.transform.position = transform.position + cameraOffset;
+    }
+
+    IEnumerator MoveToPositionAndLock()
+    {
+        isTransitioning = true;
+        while (Vector3.Distance(transform.position, markedPosition) > 0.01f)
+        {
+            transform.position = Vector3.MoveTowards(transform.position, markedPosition, transitionSpeed * Time.deltaTime);
+            yield return null;
+        }
+        transform.position = markedPosition;
+        if (mainCam != null) cameraOffset = mainCam.transform.position - transform.position;
+
+        isCameraFollowing = true;
+        isTransitioning = false;
+        isFlying = true;
+
+        initialRotation = transform.localRotation;
+
+        UpdateState(GameState.InFlight);
+    }
+
+    void StartFlyAway()
+    {
+        isFlyingAway = true;
+        isCameraFollowing = false;
+        UpdateState(GameState.FlyAway);
+
+        // Turn multiplier text red on crash
+        if (multiplierText != null) multiplierText.color = Color.red;
+
+        transform.localRotation = initialRotation;
+
+        if (graphObject != null)
+        {
+            graphObject.transform.SetParent(null);
+            graphObject.SetActive(false);
+        }
+
+        if (engineFire != null)
+        {
+            var main = engineFire.main;
+            main.startSize = 3f;
+        }
+    }
+
+    void ApplyGentleFloat()
+    {
+        float xShake = (Mathf.PerlinNoise(Time.time * danceSpeed, 0) - 0.5f) * danceIntensity;
+        float yShake = (Mathf.PerlinNoise(0, Time.time * danceSpeed) - 0.5f) * danceIntensity;
+        if (rb != null) rb.position += new Vector2(xShake, yShake);
+    }
+}

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import {localSocket, remoteSocket} from "../services/socket";
-import {api_url, remote_url} from "../constants/api";
-import {pc_id} from "../services/socket";
-import {useNavigate} from "react-router-dom";
+import { localSocket, remoteSocket } from "../services/socket";
+import { api_url, remote_url } from "../constants/api";
+import { pc_id } from "../services/socket";
+import { useNavigate } from "react-router-dom";
 
 interface MouseState {
     id: string;
@@ -11,11 +11,12 @@ interface MouseState {
 
 const ActivationPage: React.FC = () => {
     const [mice, setMice] = useState<Record<string, MouseState>>({});
-    const [miceIds,setMiceIds] = useState<string[]>([]);
+    const [miceIds, setMiceIds] = useState<string[]>([]);
     const [connected, setConnected] = useState(localSocket.connected);
     const [activationCode, setActivationCode] = useState("00000");
 
     const navigate = useNavigate();
+    const slotColors = ["#8b7b1e", "#0a6b31", "#4a235a", "#922b21", "#566573", "#9b1b30"];
 
     const getActivationCode = async () => {
         try {
@@ -39,10 +40,7 @@ const ActivationPage: React.FC = () => {
         const onStatus = (data: { event: string; id: string }) => {
             if (data.event === 'connected') {
                 setMice(prev => ({ ...prev, [data.id]: { id: data.id, isPressed: false } }));
-                setMiceIds(prev => {
-                    if (prev.includes(data.id)) return prev;
-                    return [...prev, data.id];
-                });
+                setMiceIds(prev => prev.includes(data.id) ? prev : [...prev, data.id]);
             } else {
                 setMice(prev => {
                     const next = { ...prev };
@@ -67,7 +65,6 @@ const ActivationPage: React.FC = () => {
         };
 
         const handleActivation = async (data: any) => {
-            console.log(data);
             localStorage.setItem('stationName', data.stationName);
             localStorage.setItem('stationId', data.stationId);
 
@@ -76,33 +73,23 @@ const ActivationPage: React.FC = () => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({ deviceId: data.deviceId })
+                    body: JSON.stringify({ deviceId: pc_id })
                 });
 
                 const data1 = await request.json();
-                if(request.ok){
-                    if(data1.success){
-                        localStorage.setItem('token',data1.token);
-                    }
+                if (request.ok && data1.success) {
+                    localStorage.setItem('token', data1.token);
                 }
 
-                const registerMice = await fetch(`${remote_url}/api/v1/device/add-mouse`,{
-                    method:'POST',
-                    headers:{
-                        'Content-Type':'application/json',
-                        'Authorization': 'Bearer '+data1.token
+                await fetch(`${remote_url}/api/v1/device/add-mouse`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + data1.token
                     },
-                    credentials:'include',
-                    body: JSON.stringify({
-                        mice:miceIds
-                    })
-                })
-
-                const data2 = await registerMice.json();
-
-                if(registerMice.ok){
-                    console.log(data2)
-                }
+                    credentials: 'include',
+                    body: JSON.stringify({ mice: miceIds })
+                });
 
                 navigate('/game/play');
             } catch (error) {
@@ -123,93 +110,116 @@ const ActivationPage: React.FC = () => {
             localSocket.off('click', onClick);
             remoteSocket.off('deviceActivated', handleActivation);
         };
-    }, [connected]);
+    }, [connected, miceIds, navigate]);
 
     return (
-        <div className="h-screen bg-[#1e293b] text-slate-200 font-sans flex flex-col overflow-hidden">
-            <div className="p-4 flex justify-between items-center bg-[#0f172a]/40 border-b border-white/5 shrink-0">
-                <div className="flex items-center gap-4">
-                    <h1 className="text-lg font-bold text-white tracking-tight uppercase">Terminal Activation</h1>
-                    <div className={`px-3 py-1 rounded-md border text-[10px] font-black flex items-center gap-2 ${
-                        connected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
-                    }`}>
-                        <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                        {connected ? 'ONLINE' : 'OFFLINE'}
+        <div className="h-screen bg-[#0b0b0e] text-slate-200 font-sans flex flex-col overflow-hidden">
+            <style dangerouslySetInnerHTML={{ __html: `
+                .hide-scrollbar::-webkit-scrollbar { display: none; }
+                .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+            `}} />
+
+            {/* Header Navigation Bar */}
+            <div className="h-14 border-b border-white/5 bg-[#121117] flex items-center justify-between px-6 shrink-0 z-10">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-red-600 rounded flex items-center justify-center shadow-[0_0_15px_rgba(225,29,72,0.4)]">
+                        <span className="text-white font-black italic tracking-tighter">A</span>
                     </div>
+                    <h1 className="text-lg font-black uppercase tracking-tighter text-white">
+                        Aviator <span className="text-red-600">Pro</span> Console
+                    </h1>
                 </div>
 
-                <div className="bg-rose-500 border border-rose-400 py-1.5 px-4 rounded-md shadow-lg shadow-rose-900/20">
-                    <p className="text-white text-[10px] font-black tracking-wider animate-pulse uppercase">
+                <div className="bg-red-600/10 border border-red-600/20 py-1 px-4 rounded-full">
+                    <p className="text-red-500 text-[10px] font-black tracking-widest animate-pulse uppercase">
                         ⚠️ PLUG IN ALL DEVICES BEFORE ACTIVATING!
                     </p>
                 </div>
             </div>
 
-            <div className="flex-1 flex items-center justify-center min-h-0">
-                <div className="bg-[#0f172a] border border-white/10 p-8 rounded-3xl shadow-2xl text-center max-w-md w-full">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.3em]">Activation PIN</span>
-                    <div className="text-6xl font-mono font-black text-white mt-2 tracking-widest">
-                        {activationCode}
+            {/* Main Activation Area */}
+            <div className="flex-1 flex flex-col items-center justify-center relative p-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#1a1921] to-[#0b0b0e]">
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 pointer-events-none" />
+
+                <div className="z-10 bg-[#121117]/80 backdrop-blur-xl border border-white/10 p-10 rounded-[2.5rem] shadow-2xl text-center max-w-lg w-full relative">
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-red-600 text-[9px] font-black px-4 py-1 rounded-full tracking-[0.2em] uppercase shadow-[0_0_15px_rgba(225,29,72,0.5)]">
+                        System Setup
                     </div>
-                    <div className="mt-6 pt-6 border-t border-white/5">
-                        <p className="text-emerald-400 text-xs font-black uppercase tracking-widest drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]">
-                            Please use PIN above to activate this device!
+
+                    <span className="text-[11px] font-black text-slate-500 uppercase tracking-[0.4em] block mb-4">Activation Code</span>
+
+                    <div className="bg-black/40 rounded-2xl py-8 border border-white/5 shadow-inner">
+                        <div className="text-7xl font-mono font-black text-white tracking-[0.2em] drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]">
+                            {activationCode}
+                        </div>
+                    </div>
+
+                    <div className="mt-8 pt-8 border-t border-white/5 space-y-4">
+                        <p className="text-emerald-500 text-xs font-black uppercase tracking-widest leading-relaxed">
+                            Awaiting remote activation command...<br/>
+                            <span className="text-slate-500 opacity-60">Enter the PIN on your management dashboard</span>
                         </p>
-                        <p className="text-md font-bold animate-pulse mt-2">{pc_id}</p>
+
+                        <div className="inline-block px-4 py-2 bg-white/5 rounded-lg border border-white/10">
+                            <span className="text-[10px] text-slate-500 font-bold uppercase mr-2">PC ID:</span>
+                            <span className="text-xs font-mono font-bold text-white">{pc_id}</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div className="bg-[#0f172a]/60 backdrop-blur-md border-t border-white/10 p-6 shrink-0">
-                <div className="max-w-7xl mx-auto">
-                    <div className="flex items-center gap-4 mb-4">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Hardware Diagnostics (MICE)</span>
-                        <div className="h-px flex-grow bg-slate-700" />
+            {/* Bottom Hardware Diagnostics (Matching Gameplay Layout) */}
+            <div className="h-52 w-full shrink-0 bg-[#08080a] border-t border-white/10 px-6 py-4 flex flex-col overflow-hidden">
+                <div className="flex items-center gap-4 mb-3 shrink-0">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-emerald-500 animate-pulse shadow-[0_0_10px_#10b981]' : 'bg-red-600'}`} />
+                        <span className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Diagnostic Mode: {connected ? 'Online' : 'Offline'}</span>
                     </div>
+                    <div className="px-3 py-1 rounded bg-white/5 border border-white/10 text-xs font-black text-white tabular-nums">
+                        {miceIds.length} MICE DETECTED
+                    </div>
+                    <div className="h-px flex-grow bg-gradient-to-r from-white/10 to-transparent" />
+                </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {Object.values(mice).map((mouse) => (
-                            <div
-                                key={mouse.id}
-                                className={`p-3 rounded-xl border-2 transition-all duration-150 flex items-center gap-3 ${
-                                    mouse.isPressed
-                                        ? 'bg-emerald-600 border-emerald-400 shadow-xl scale-[1.02]'
-                                        : 'bg-[#1e293b] border-white/5'
-                                }`}
-                            >
-                                <div className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center shadow-inner ${
-                                    mouse.isPressed ? 'bg-white text-emerald-600' : 'bg-[#0f172a] text-slate-600'
-                                }`}>
-                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2" />
-                                    </svg>
+                <div className="flex-1 flex flex-nowrap gap-4 overflow-x-auto overflow-y-hidden pb-2 hide-scrollbar">
+                    {miceIds.map((id, index) => {
+                        const mouse = mice[id];
+                        const color = slotColors[index % slotColors.length];
+
+                        return (
+                            <div key={id} className={`w-[240px] shrink-0 flex flex-col rounded-xl border-2 overflow-hidden transition-all duration-75 select-none shadow-xl h-full ${mouse?.isPressed ? 'border-white scale-[0.96] brightness-125' : 'border-white/10 bg-[#0d1111]'}`}>
+                                <div className="flex h-1/2 border-b border-white/5">
+                                    <div style={{ backgroundColor: color }} className="w-16 flex items-center justify-center text-4xl font-black italic text-black/90">
+                                        {index + 1}
+                                    </div>
+                                    <div className="flex-1 flex items-center justify-center bg-black/40">
+                                        <div className="flex flex-col items-center">
+                                            <span className={`text-[10px] font-black uppercase tracking-tighter ${mouse?.isPressed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                                {mouse?.isPressed ? 'RECEIVING' : 'STANDBY'}
+                                            </span>
+                                            <div className={`w-8 h-1 rounded-full mt-1 ${mouse?.isPressed ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-800'}`} />
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="min-w-0 flex-grow">
-                                    <p className={`text-[8px] font-black uppercase tracking-widest ${mouse.isPressed ? 'text-emerald-100' : 'text-slate-500'}`}>
-                                        ID
-                                    </p>
-                                    <p className={`text-[10px] font-mono font-bold truncate ${mouse.isPressed ? 'text-white' : 'text-slate-300'}`}>
-                                        {mouse.id}
-                                    </p>
-                                </div>
-                                <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
-                                    mouse.isPressed
-                                        ? 'bg-white text-emerald-700 border-white'
-                                        : 'bg-slate-800 text-slate-500 border-slate-700'
-                                }`}>
-                                    {mouse.isPressed ? 'SIGNAL' : 'IDLE'}
+                                <div className="flex-1 flex flex-col justify-center p-3 bg-gradient-to-tr from-black/80 to-[#121616]">
+                                    <label className="text-[8px] font-black text-slate-500 uppercase mb-1 tracking-widest">Device Hardware ID</label>
+                                    <div className="h-8 bg-[#050707] rounded border border-white/5 flex items-center px-3">
+                                        <span className="text-[10px] font-mono font-bold text-slate-300 truncate">
+                                            {id}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
-                        ))}
+                        );
+                    })}
 
-                        {Object.keys(mice).length === 0 && (
-                            <div className="col-span-full py-5 text-center border border-dashed border-white/5 rounded-xl">
-                                <span className="text-md font-bold text-slate-600 uppercase tracking-widest">
-                                    Scanning for mice...
-                                </span>
-                            </div>
-                        )}
-                    </div>
+                    {miceIds.length === 0 && (
+                        <div className="flex-1 flex items-center justify-center border-2 border-dashed border-white/5 rounded-2xl">
+                            <span className="text-xs font-black text-slate-600 uppercase tracking-[0.3em] animate-pulse">
+                                Connect mouse hardware to begin diagnostics
+                            </span>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
