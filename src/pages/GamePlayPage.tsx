@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { remote_url } from "../constants/api";
-import { localSocket, pc_id, remoteSocket } from "../services/socket";
+import {localSocket, onIdReady, pc_id, remoteSocket} from "../services/socket";
 import { Unity, useUnityContext } from "react-unity-webgl";
 import BettingTimer from "../components/BettingTimer";
 import {useNavigate} from "react-router-dom";
@@ -53,25 +53,30 @@ const GamePlayPage = () => {
     const navigate = useNavigate();
 
     useEffect(() => {
-        const login=async()=>{
-            const request = await fetch(`${remote_url}/api/v1/device/login-device`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ deviceId: pc_id })
-            });
+        onIdReady(async (readyPcId) => {
+            console.log("Auth Triggered with PC_ID:", readyPcId);
+            try {
+                const request = await fetch(`${remote_url}/api/v1/device/login-device`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ deviceId: readyPcId })
+                });
 
-            const data1 = await request.json();
-            if (request.ok && data1.success) {
-                localStorage.setItem('token', data1.token);
-            }
+                const data1 = await request.json();
+                console.log("Login Response:", data1);
 
-            if(!data1.success){
+                if (request.ok && data1.success) {
+                    localStorage.setItem('token', data1.token);
+                    if (data1.stationId) localStorage.setItem('stationId', data1.stationId);
+                } else {
+                    navigate("/activation");
+                }
+            } catch (err) {
+                console.error("Critical Auth Error:", err);
                 navigate("/activation");
             }
-        }
-        login();
-    }, []);
+        });
+    }, [navigate]);
 
     const { unityProvider, isLoaded, sendMessage } = useUnityContext({
         loaderUrl: "/unity-build/web_game.loader.js",
