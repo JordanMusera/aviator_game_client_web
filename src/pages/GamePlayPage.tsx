@@ -30,6 +30,7 @@ const GamePlayPage = () => {
     const [currentMultiplier, setCurrentMultiplier] = useState<number>(1.00);
     const [jackpots, setJackpots] = useState<Jackpot>({ device: { amount: 0 }, gold: { amount: 0 }, silver: { amount: 0 } });
     const [maxStake,setMaxStake] = useState(500);
+    const [bonusPercentage, setBonusPercentage] = useState(0);
 
 
     const statusRef = useRef(status);
@@ -38,9 +39,10 @@ const GamePlayPage = () => {
     const miceDataRef = useRef(miceData);
     const miceIdsRef = useRef(miceIds);
     const activeRoundIdRef = useRef("");
-    const multiplierRef = useRef(1.00);
+    const multiplierRef = useRef(currentMultiplier);
     const historyScrollRef = useRef<HTMLDivElement>(null);
-    const maxStakeRef = useRef(maxStake);
+    const maxStakeRef = useRef(maxStake)
+    const bonusPercentageRef=useRef(bonusPercentage);
 
     const MAX_SLOTS = 6;
     const token = localStorage.getItem("token");
@@ -60,6 +62,7 @@ const GamePlayPage = () => {
     useEffect(() => { miceDataRef.current = miceData; }, [miceData]);
     useEffect(() => { miceIdsRef.current = miceIds; }, [miceIds]);
     useEffect(() => { maxStakeRef.current = maxStake; }, [maxStake]);
+    useEffect(() => { bonusPercentageRef.current = bonusPercentage}, [bonusPercentage]);
 
     useEffect(() => {
         if (historyScrollRef.current) {
@@ -96,7 +99,7 @@ const GamePlayPage = () => {
         } catch (e) { console.error(e); }
     }, [token]);
 
-    const registerNewMouse = useCallback(async (id: string) => {
+    const plugMouse = useCallback(async (id: string) => {
         await fetch(`${remote_url}/api/v1/device/add-mouse`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
@@ -104,6 +107,14 @@ const GamePlayPage = () => {
         });
         fetchMiceInfo();
     }, [token, fetchMiceInfo]);
+
+    const removeMouse=async(mouseId:string)=>{
+        await fetch(`${remote_url}/api/v1/device/remove-mouse`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+            body: JSON.stringify({ mouseId })
+        });
+    }
 
     const placeBet = async (mouseId: string, amount: number) => {
         if (!activeRoundIdRef.current) return;
@@ -166,8 +177,10 @@ const GamePlayPage = () => {
             if (data.event === "connected") {
                 setMice(prev => ({ ...prev, [data.id]: { id: data.id, isPressed: false, notification: null } }));
                 setMiceIds(prev => prev.includes(data.id) ? prev : [...prev, data.id].slice(0, MAX_SLOTS));
-                if (!miceDataRef.current[data.id]) registerNewMouse(data.id);
-            } else { setMiceIds(prev => prev.filter(id => id !== data.id)); }
+                plugMouse(data.id);
+            } else {
+                removeMouse(data.id);
+                setMiceIds(prev => prev.filter(id => id !== data.id)); }
         };
 
         const onClick = (data: { id: string, button: string }) => {
@@ -182,25 +195,27 @@ const GamePlayPage = () => {
             if (data.button === 'right' && (['WAITING', 'BETTING', 'CRASHED'].includes(currentStatus))) {
                 if (!miceRef.current[mid]?.notification) {
                     const currentBalance = miceDataRef.current[mid]?.balance || 0;
-
-                    // Use Ref for stakes AND maxStake
                     const currentStake = stakesRef.current[mid] || 10;
-                    const nextStakeValue = currentStake >= maxStakeRef.current ? 10 : currentStake + 10;
 
-                    if (nextStakeValue > currentBalance) {
-                        // Show info notification
-                        setMice(prev => ({
-                            ...prev,
-                            [mid]: { ...prev[mid], notification: { type: 'info', message: 'INSUFFICIENT BALANCE' } }
-                        }));
+                    // Determine the next increment
+                    let nextStakeValue = currentStake + 10;
 
-                        setTimeout(() => {
-                            setMice(prev => (prev[mid]?.notification?.message === 'INSUFFICIENT BALANCE'
-                                ? { ...prev, [mid]: { ...prev[mid], notification: null } } : prev));
-                        }, 1500);
-                    } else {
-                        setStakes(prev => ({ ...prev, [mid]: nextStakeValue }));
+                    // LOGIC:
+                    // 1. If we exceed the global maxStake OR we are already at/above our balance: Reset to 10
+                    // 2. If the next +10 step would exceed our balance: Jump exactly to the balance
+                    if (currentStake >= maxStakeRef.current || currentStake >= currentBalance) {
+                        nextStakeValue = 10;
+                    } else if (nextStakeValue > currentBalance) {
+                        nextStakeValue = currentBalance;
                     }
+
+                    // Final check: if 10 is still greater than balance (e.g., user has 5 KES)
+                    // ensure we don't set a stake higher than balance.
+                    if (nextStakeValue > currentBalance && currentBalance > 0) {
+                        nextStakeValue = currentBalance;
+                    }
+
+                    setStakes(prev => ({ ...prev, [mid]: nextStakeValue }));
                 }
             } else if (data.button === 'left') {
                 if (currentStatus === "BETTING") {
@@ -266,17 +281,45 @@ const GamePlayPage = () => {
 
         remoteSocket.on("playerCashedOut", data => {
             setLiveBets(p => p.map(b => b.mouseId === data.mouseId ? { ...b, multiplier: data.multiplier, winAmount: data.winAmount } : b));
-            if (miceIdsRef.current.includes(data.mouseId)) {
-                setMice(prev => ({ ...prev, [data.mouseId]: { ...prev[data.mouseId], notification: { type: 'Won', message: `+${data.winAmount}` } } }));
-                fetchMiceInfo();
-            }
             if (isLoaded) sendMessage("rocket", "React_UserCashOut", data.winAmount);
+        });
+
+        remoteSocket.on("player:won", data => {
+            const { mouseId, winAmount } = data;
+            if (miceIdsRef.current.includes(mouseId)) {
+                setMice(prev => ({
+                    ...prev,
+                    [mouseId]: {
+                        ...prev[mouseId],
+                        notification: { type: 'Won', message: `+${Number(winAmount).toFixed(2)}` }
+                    }
+                }));
+                fetchMiceInfo(); // Sync balance
+            }
+        });
+
+        remoteSocket.on("player:lost", data => {
+            const { mouseId } = data;
+            // We only trigger this for the specific mouse that lost
+            if (miceIdsRef.current.includes(mouseId)) {
+                setMice(prev => ({
+                    ...prev,
+                    [mouseId]: {
+                        ...prev[mouseId],
+                        notification: { type: 'Lost', message: 'BOMBED!' }
+                    }
+                }));
+
+                fetchMiceInfo(); // Sync balance
+            }
         });
 
         remoteSocket.on("crashed", data => {
             setStatus("CRASHED");
             setInitialCrashHistory(data.history);
             activeRoundIdRef.current = "";
+
+            console.log("Crashed Point ref: ",multiplierRef);
 
             setStakes(prevStakes => {
                 const nextStakes: Record<string, number> = {};
@@ -300,23 +343,25 @@ const GamePlayPage = () => {
                 return nextStakes;
             });
 
-            setMice(prev => {
-                const next = { ...prev };
-                Object.keys(next).forEach(id => {
-                    const type = next[id]?.notification?.type;
-                    if (type === 'Awaiting Cashout' || type === 'Bet Placed' || type === 'Cashing Out') {
-                        next[id].notification = { type: 'Lost', message: 'BOMBED!' };
-                    }
-                });
-                return next;
-            });
+
 
             if (isLoaded) sendMessage("rocket", "React_TriggerFlyAway");
             fetchMiceInfo();
         });
 
         remoteSocket.on("jackpot:won",data=>{
-
+            const { winner, type, stationId, deviceId, amount } = data;
+            if (miceIdsRef.current.includes(winner)) {
+                setMice(prev => ({
+                    ...prev,
+                    [winner]: {
+                        ...prev[winner],
+                        notification: { type: 'Won', message: `Jackpot: +${Number(amount).toFixed(2)}` }
+                    }
+                }));
+                fetchMiceInfo();
+            }
+            //if (isLoaded) sendMessage("rocket", "React_JackpotAwarded",type,amount);
         });
 
         remoteSocket.on("bonusAwarded", data => {
@@ -377,9 +422,10 @@ const GamePlayPage = () => {
             fetchMiceInfo();
         });
 
-        remoteSocket.on('maxStake',data=>{
-            setMaxStake(data.amount);
-        })
+        remoteSocket.on('deviceConfig', data => {
+            if (data.maxStake) setMaxStake(data.maxStake);
+            if (data.bonusPercentage) setBonusPercentage(data.bonusPercentage);
+        });
 
         remoteSocket.on("jackpot:stats", data => setJackpots(data));
         localSocket.on("status", onStatus);
@@ -395,7 +441,7 @@ const GamePlayPage = () => {
             remoteSocket.off("crashed");
             remoteSocket.off("jackpot:stats");
         };
-    }, [fetchMiceInfo, registerNewMouse, stationId, isLoaded, sendMessage]);
+    }, [fetchMiceInfo, plugMouse, stationId, isLoaded, sendMessage]);
 
     return (
         <div
@@ -508,7 +554,11 @@ const GamePlayPage = () => {
                             {notification?.type === 'Won' && <div className="coin-anim text-5xl drop-shadow-[0_0_15px_rgba(251,192,45,0.9)]">💰</div>}
 
                             {/* UPPER SECTION (NOW 50% HEIGHT) */}
-                            <div className="h-1/2 flex items-stretch relative overflow-hidden">
+                            <div
+                                className={`h-1/2 flex items-stretch relative overflow-hidden transition-all duration-75 ${
+                                    mouseState?.isPressed ? 'opacity-50 scale-95' : 'opacity-100 scale-100'
+                                }`}
+                            >
                                 <div className="w-1/5 flex items-center justify-center text-4xl font-black text-white" style={{ backgroundColor: isPluggedIn ? stateColor : "#1a1a1a" }}>{index + 1}</div>
 
                                 <div className="flex-1 flex items-center justify-center px-2 relative">
