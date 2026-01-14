@@ -3,6 +3,7 @@ import { remote_url } from "../constants/api";
 import { localSocket, pc_id, remoteSocket } from "../services/socket";
 import { Unity, useUnityContext } from "react-unity-webgl";
 import BettingTimer from "../components/BettingTimer";
+import {useNavigate} from "react-router-dom";
 
 interface MouseState {
     id: string;
@@ -48,6 +49,29 @@ const GamePlayPage = () => {
     const token = localStorage.getItem("token");
     const stationId = localStorage.getItem("stationId");
     const slotColors = ["#ef4444", "#22c55e", "#3b82f6", "#64748b", "#f59e0b"];
+
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        const login=async()=>{
+            const request = await fetch(`${remote_url}/api/v1/device/login-device`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ deviceId: pc_id })
+            });
+
+            const data1 = await request.json();
+            if (request.ok && data1.success) {
+                localStorage.setItem('token', data1.token);
+            }
+
+            if(!data1.success){
+                navigate("/activation");
+            }
+        }
+        login();
+    }, []);
 
     const { unityProvider, isLoaded, sendMessage } = useUnityContext({
         loaderUrl: "/unity-build/web_game.loader.js",

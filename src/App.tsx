@@ -1,13 +1,8 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
+import {BrowserRouter as Router, Routes, Route, Navigate, Link} from 'react-router-dom';
 import ActivationPage from './pages/ActivationPage';
 import GamePlayPage from "./pages/GamePlayPage";
-import {remote_url} from "./constants/api";
-import {pc_id} from "./services/socket";
 
-/**
- * RESTORED 404 DESIGN
- */
 const NotFoundPage = () => {
     return (
         <div className="flex items-center justify-center min-h-screen bg-[#0b0b0e] relative overflow-hidden font-sans">
@@ -36,7 +31,6 @@ const NotFoundPage = () => {
  * MAIN APP COMPONENT
  */
 const App: React.FC = () => {
-
     useEffect(() => {
         // PREVENT RIGHT-CLICK CONTEXT MENU GLOBALLY
         const handleContextMenu = (e: MouseEvent) => {
@@ -45,20 +39,7 @@ const App: React.FC = () => {
 
         window.addEventListener('contextmenu', handleContextMenu);
 
-        const login=async()=>{
-            const request = await fetch(`${remote_url}/api/v1/device/login-device`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ deviceId: pc_id })
-            });
 
-            const data1 = await request.json();
-            if (request.ok && data1.success) {
-                localStorage.setItem('token', data1.token);
-            }
-        }
-        login();
 
         // Cleanup listener on unmount
         return () => {
@@ -87,7 +68,7 @@ const App: React.FC = () => {
 
             <div className="h-screen w-screen overflow-hidden bg-[#0b0b0e] select-none cursor-none">
                 <Routes>
-                    <Route path="/" element={<Navigate to="/activation" replace />} />
+                    <Route path="/" element={<Navigate to="/game/play" replace />} />
                     <Route path="/activation" element={<ActivationPage />} />
                     <Route path="/game/play" element={<GamePlayPage />} />
                     <Route path="*" element={<NotFoundPage />} />
