@@ -44,6 +44,8 @@ const GamePlayPage = () => {
     const historyScrollRef = useRef<HTMLDivElement>(null);
     const maxStakeRef = useRef(maxStake)
     const bonusPercentageRef=useRef(bonusPercentage);
+    const [currency,setCurrency] = useState("Ksh")
+    const betListRef = useRef<HTMLDivElement>(null);
 
     const MAX_SLOTS = 6;
     const token = localStorage.getItem("token");
@@ -85,6 +87,11 @@ const GamePlayPage = () => {
         codeUrl: "/unity-build/web_game.wasm.unityweb",
     });
 
+    useEffect(() => {
+        let bonusText = "FINAL BONUS: "+bonusPercentage+"%";
+        if (isLoaded) sendMessage("rocket", "React_SetBonusPercentage",bonusText);
+    }, [isLoaded,bonusPercentage,sendMessage,status]);
+
     useEffect(() => { statusRef.current = status; }, [status]);
     useEffect(() => { stakesRef.current = stakes; }, [stakes]);
     useEffect(() => { miceRef.current = mice; }, [mice]);
@@ -95,9 +102,19 @@ const GamePlayPage = () => {
 
     useEffect(() => {
         if (historyScrollRef.current) {
-            historyScrollRef.current.scrollLeft = historyScrollRef.current.scrollWidth;
+            historyScrollRef.current.scrollTo({
+                left: 0,
+                behavior: 'smooth'
+            });
         }
     }, [initialCrashHistory]);
+
+    useEffect(() => {
+        if (betListRef.current) {
+            // Automatically scroll to the bottom whenever a new bet arrives
+            betListRef.current.scrollTop = betListRef.current.scrollHeight;
+        }
+    }, [liveBets]); // Triggers every time the liveBets array grows
 
     const fetchMiceInfo = useCallback(async () => {
         if (!token) return;
@@ -192,12 +209,29 @@ const GamePlayPage = () => {
         }));
     };
 
-    const cashout = async (mouseId: string) => {
+    const cashout = async (mouseId: string, stake: any) => {
         if (!activeRoundIdRef.current) return;
-        setMice(prev => ({ ...prev, [mouseId]: { ...prev[mouseId], notification: { type: 'Cashing Out', message: 'CASHING OUT...' } } }));
-        remoteSocket.emit("cashoutBet", { deviceId: pc_id, mouseId, multiplier: multiplierRef.current, roundId: activeRoundIdRef.current });
-    };
 
+        const multiplierValue = multiplierRef.current;
+        remoteSocket.emit("cashoutBet", {
+            deviceId: pc_id,
+            mouseId,
+            multiplier: multiplierValue,
+            roundId: activeRoundIdRef.current
+        });
+
+        setMice(prev => ({
+            ...prev,
+            [mouseId]: {
+                ...prev[mouseId],
+                notification: {
+                    type: 'Cashing Out',
+                    // Wrap the math in () then apply toFixed
+                    message: `Won +${((stake * (multiplierValue) || 0)).toFixed(2)}`
+                }
+            }
+        }));
+    };
     useEffect(() => {
         if (!stationId) return;
         remoteSocket.emit("joinDeviceSession", { stationId, deviceId: pc_id });
@@ -226,20 +260,35 @@ const GamePlayPage = () => {
                     const currentBalance = miceDataRef.current[mid]?.balance || 0;
                     const currentStake = stakesRef.current[mid] || 10;
 
-                    // Determine the next increment
                     let nextStakeValue = currentStake + 10;
 
-                    // LOGIC:
-                    // 1. If we exceed the global maxStake OR we are already at/above our balance: Reset to 10
-                    // 2. If the next +10 step would exceed our balance: Jump exactly to the balance
+                    // 1. Reset to 10 if we hit max stake or are already at/above balance
                     if (currentStake >= maxStakeRef.current || currentStake >= currentBalance) {
                         nextStakeValue = 10;
-                    } else if (nextStakeValue > currentBalance) {
-                        nextStakeValue = currentBalance;
+                    }
+                    // 2. If the current stake is "odd" (not divisible by 10) and we have enough money, reset to 10
+                    else if (currentStake % 10 !== 0 && currentBalance >= 10) {
+                        nextStakeValue = 10;
+                    }
+                    // 3. If the next +10 step exceeds balance
+                    else if (nextStakeValue > currentBalance) {
+                        if (currentBalance % 10 === 0) {
+                            nextStakeValue = 10;
+                        } else {
+                            // Set to odd remainder (e.g., 47)
+                            nextStakeValue = currentBalance;
+
+                            // YOUR NEW RULE: If this new odd stake is >= 10 and >= balance, return to 10
+                            // Note: Since nextStakeValue IS currentBalance here, it's always >= balance.
+                            if (nextStakeValue % 10 !== 0 && nextStakeValue >= 10) {
+                                // Logic check: If you want the "odd" balance to be skippable
+                                // and go straight to 10 when it's above 10, use this:
+                                nextStakeValue = 10;
+                            }
+                        }
                     }
 
-                    // Final check: if 10 is still greater than balance (e.g., user has 5 KES)
-                    // ensure we don't set a stake higher than balance.
+                    // Final safety: never allow stake > balance unless balance is 0
                     if (nextStakeValue > currentBalance && currentBalance > 0) {
                         nextStakeValue = currentBalance;
                     }
@@ -263,7 +312,7 @@ const GamePlayPage = () => {
                         }
                     }
                 } else if (currentStatus === "IN_FLIGHT") {
-                    if (miceRef.current[mid]?.notification?.type === 'Awaiting Cashout') cashout(mid);
+                    if (miceRef.current[mid]?.notification?.type === 'Awaiting Cashout') cashout(mid,stakesRef.current[mid]);
                 }
             }
         };
@@ -283,7 +332,11 @@ const GamePlayPage = () => {
             multiplierRef.current = 1.0;
             activeRoundIdRef.current = data.roundId;
             fetchMiceInfo();
-            if (isLoaded) { sendMessage("rocket", "React_RestartFresh"); sendMessage("rocket", "React_StartBetting"); }
+            if (isLoaded) { sendMessage("rocket", "React_RestartFresh");
+                sendMessage("rocket", "React_StartBetting");
+                let bonusText = "FINAL BONUS: "+bonusPercentage+"%";
+                sendMessage("rocket", "React_SetBonusPercentage",bonusText);
+            }
         });
 
         remoteSocket.on("flightStarted", data => {
@@ -323,7 +376,6 @@ const GamePlayPage = () => {
                         notification: { type: 'Won', message: `+${Number(winAmount).toFixed(2)}` }
                     }
                 }));
-                fetchMiceInfo(); // Sync balance
             }
         });
 
@@ -358,21 +410,27 @@ const GamePlayPage = () => {
                     const previousStake = prevStakes[id] || 10;
 
                     if (currentBalance <= 0) {
-                        // No money left
-                        nextStakes[id] = 0;
-                    } else if (currentBalance < previousStake) {
-                        // Balance is now lower than the last stake (forced reduction)
-                        // This covers your "below 10" rule automatically
+                        // No money left: default UI to 10
+                        nextStakes[id] = 10;
+                    } else if (currentBalance < 10) {
+                        // Forced reduction: user has money but it's below the minimum
                         nextStakes[id] = currentBalance;
+                    } else if (previousStake % 10 !== 0) {
+                        // DIVISIBILITY RULE:
+                        // If the previous stake was an "odd" number (e.g., 7 or 43),
+                        // and balance is now >= 10, reset the stake to the standard 10.
+                        nextStakes[id] = 10;
+                    } else if (currentBalance < previousStake) {
+                        // Balance dropped below the chosen stake: Reset to 10
+                        // (or balance if balance happened to drop between 0-9)
+                        nextStakes[id] = currentBalance < 10 ? currentBalance : 10;
                     } else {
-                        // Balance is healthy, maintain the previous stake
+                        // Balance is healthy and previous stake was standard: Keep it.
                         nextStakes[id] = previousStake;
                     }
                 });
                 return nextStakes;
             });
-
-
 
             if (isLoaded) sendMessage("rocket", "React_TriggerFlyAway");
             fetchMiceInfo();
@@ -454,7 +512,45 @@ const GamePlayPage = () => {
         remoteSocket.on('deviceConfig', data => {
             if (data.maxStake) setMaxStake(data.maxStake);
             if (data.bonusPercentage) setBonusPercentage(data.bonusPercentage);
+            if(data.currency) setCurrency(data.currency.symbol);
         });
+
+        remoteSocket.on("balanceUpdate", data => {
+            const { mouseId, newBalance } = data;
+            setMiceData(prev => {
+                if (!prev[mouseId]) return prev;
+                return {
+                    ...prev,
+                    [mouseId]: { ...prev[mouseId], balance: newBalance }
+                };
+            });
+            setStakes(prevStakes => {
+                if (newBalance < (prevStakes[mouseId] || 0)) {
+                    return { ...prevStakes, [mouseId]: newBalance };
+                }
+                return prevStakes;
+            });
+        });
+
+        remoteSocket.on("jackpot:won", data => {
+            // Find the player index (1-6)
+            const playerId = miceIds.indexOf(data.winner) + 1;
+
+            // Only send to Unity if the winner is actually at this station (index > 0)
+            if (isLoaded && playerId > 0) {
+                const payload = JSON.stringify({
+                    user: playerId,
+                    type: data.type,
+                    amount: data.amount
+                });
+
+                sendMessage("rocket", "React_TriggerJackpot", payload);
+            }
+        });
+
+        remoteSocket.on("initialHistory",data=>{
+            setInitialCrashHistory(data);
+        })
 
         remoteSocket.on("jackpot:stats", data => setJackpots(data));
         localSocket.on("status", onStatus);
@@ -468,7 +564,10 @@ const GamePlayPage = () => {
             remoteSocket.off("multiplier");
             remoteSocket.off("playerCashedOut");
             remoteSocket.off("crashed");
+            remoteSocket.off("deviceConfig");
+            remoteSocket.off("balanceUpdate");
             remoteSocket.off("jackpot:stats");
+            remoteSocket.off("initialHistory")
         };
     }, [fetchMiceInfo, plugMouse, stationId, isLoaded, sendMessage]);
 
@@ -493,6 +592,16 @@ const GamePlayPage = () => {
                     backdrop-filter: blur(12px); 
                     border: 1px solid rgba(255, 255, 255, 0.1); 
                 }
+                
+                @keyframes slide-in-bet {
+                0% { transform: translateX(100%); opacity: 0; }
+                100% { transform: translateX(0); opacity: 1; }
+                }
+            
+                .new-bet-row {
+                    animation: slide-in-bet 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+                    will-change: transform;
+                }
             `}} />
 
             <div className="flex flex-1 overflow-hidden min-h-0 relative z-10">
@@ -501,23 +610,32 @@ const GamePlayPage = () => {
                     <div className="p-3 bg-[#163a63] border-b border-white/10 shrink-0">
                         <h2 className="text-sm font-black italic text-blue-300">LIVE BETS</h2>
                     </div>
-                    <div className="flex-1 overflow-y-auto hide-scrollbar divide-y divide-white/5">
-                        {liveBets.map((bet, idx) => {
-                            // Logic to determine background color
+
+                    {/* Added a ref here to handle auto-scrolling to bottom */}
+                    <div
+                        ref={betListRef}
+                        className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar divide-y divide-white/5"
+                    >
+                        {liveBets.map((bet) => {
                             const isWon = !!bet.multiplier;
                             const isLost = status === 'CRASHED' && !bet.multiplier;
 
                             let rowBg = "";
                             if (isWon) rowBg = "bg-emerald-500/20";
-                            else if (isLost) rowBg = "bg-red-500/20"; // Reddish background for failed bets
+                            else if (isLost) rowBg = "bg-red-500/20";
 
                             return (
                                 <div
-                                    key={idx}
-                                    className={`grid grid-cols-4 items-center px-3 py-4 transition-colors duration-500 ${rowBg}`}
+                                    // Crucial: unique key tells React this is a NEW element to animate
+                                    key={`${bet.mouseId}-${bet.amount}`}
+                                    className={`grid grid-cols-4 items-center px-3 py-4 transition-colors duration-500 new-bet-row ${rowBg}`}
                                 >
-                                    <span className="text-[13px] font-bold truncate">#{bet.mouseId.slice(-3)}</span>
-                                    <span className="text-[13px] font-black text-right">{Number(bet.amount).toFixed(0)}</span>
+                    <span className="text-[13px] font-bold truncate text-slate-400">
+                        #{bet.mouseId.slice(-3)}
+                    </span>
+                                    <span className="text-[13px] font-black text-right text-white">
+                        {Number(bet.amount).toFixed(0)}
+                    </span>
                                     <span className="text-[13px] font-black text-right text-[#fbc02d]">
                         {bet.multiplier ? `${bet.multiplier}x` : "-"}
                     </span>
@@ -533,17 +651,32 @@ const GamePlayPage = () => {
                 {/* GAME CANVAS */}
                 <div className="flex-1 flex flex-col min-w-0">
                     <div className="h-20 bg-[#0a2a4d]/60 backdrop-blur-sm flex flex-col shrink-0 border-b border-white/10">
-                        <div ref={historyScrollRef} className="flex-1 flex items-center px-2 gap-1 overflow-x-auto hide-scrollbar">
-                            {/* Add .slice().reverse() here */}
-                            {initialCrashHistory.slice().reverse().map((game) => (
-                                <div
-                                    key={game._id}
-                                    className={`px-4 py-1.5 rounded text-sm font-black italic shrink-0 ${game.crashPoint < 2 ? 'bg-[#9c27b0]' : 'bg-[#00bcd4]'}`}
-                                >
-                                    {game.crashPoint.toFixed(2)}x
-                                </div>
-                            ))}
+                        <div
+                            ref={historyScrollRef}
+                            className="flex-1 flex items-center px-2 gap-1 overflow-x-auto hide-scrollbar scroll-smooth"
+                            style={{ direction: 'ltr' }}
+                        >
+                            {initialCrashHistory.slice().map((game, index) => {
+                                let colorClass = "bg-red-500";
+                                const val = game.crashPoint;
+
+                                if (val >= 10) {
+                                    colorClass = "bg-[#9c27b0]"; // 10+ (Purple)
+                                } else if (val >= 2) {
+                                    colorClass = "bg-[#3b82f6]"; // 5 - 9.99 (Blue)
+                                }
+
+                                return (
+                                    <div
+                                        key={game._id}
+                                        className={`px-4 py-1.5 rounded text-sm font-black italic shrink-0 text-white shadow-md transition-all duration-300 ${colorClass} ${index === 0 ? 'animate-pulse border border-white/50' : ''}`}
+                                    >
+                                        {val.toFixed(2)}x
+                                    </div>
+                                );
+                            })}
                         </div>
+
                         <div className="h-10 bg-[#163a63]/80 flex items-center justify-between px-10 text-[16px] font-black">
                             <span className="text-[#00bcd4]">BRONZE: {jackpots?.device?.poolAmount || 0}</span>
                             <span className="text-[#e53935]">SILVER: {jackpots?.silver?.poolAmount || 0}</span>
@@ -574,7 +707,8 @@ const GamePlayPage = () => {
                     else if (notification?.type === 'info') stateColor = "#475569"; // Slate gray for info
                     else if (notification?.type === 'Bet Placed') stateColor = "#fbc02d";
                     else if (notification?.type === 'Awaiting Cashout') stateColor = "#3b82f6";
-                    else if (notification?.type === 'Cashing Out') stateColor = "#1e40af";
+                    else if (notification?.type === 'Cashing Out') stateColor = "#22c55e";
+                    //else if (notification?.type === 'Cashing Out') stateColor = "#1e40af";
 
                     return (
                         <div key={index} className={`flex-1 h-full flex flex-col border border-white/10 relative overflow-visible glass-slot transition-all duration-500 ${!isPluggedIn ? 'opacity-30 grayscale' : 'opacity-100'}`} style={{ backgroundImage: "url('/stars_01.png')" }}>
@@ -596,7 +730,7 @@ const GamePlayPage = () => {
                                             <span className="text-[12px] uppercase opacity-90 tracking-tighter">{notification.type}</span>
                                             <span className="text-[20px] drop-shadow-md">{notification.message}</span>
                                             {(notification.type === 'Awaiting Cashout' || notification.type === 'Cashing Out') && (
-                                                <span className="text-[16px] text-yellow-300 font-bold drop-shadow-sm">KES {((stakes[mId!] || 10) * currentMultiplier).toFixed(0)}</span>
+                                                <span className="text-[16px] text-yellow-300 font-bold drop-shadow-sm">{currency} {((stakes[mId!] || 10) * currentMultiplier).toFixed(0)}</span>
                                             )}
                                         </div>
                                     ) : (
@@ -619,11 +753,11 @@ const GamePlayPage = () => {
                             <div className={`h-1/2 bg-black/70 backdrop-blur-md flex items-center px-2 py-2 gap-2 transition-opacity ${!isPluggedIn ? 'opacity-0' : 'opacity-100'}`}>
                                 <div className="flex-1 flex flex-col border-r border-white/10 pr-2">
                                     <span className="text-[11px] font-black text-slate-400">BALANCE</span>
-                                    <div className="bg-[#121212]/80 rounded px-2 py-1 text-[18px] font-black text-emerald-400 tabular-nums">KES {mData?.balance?.toFixed(0) || "0"}</div>
+                                    <div className="bg-[#121212]/80 rounded px-2 py-1 text-[18px] font-black text-emerald-400 tabular-nums">{currency} {mData?.balance?.toFixed(2).toLocaleString() || "0"}</div>
                                 </div>
                                 <div className="flex-1 flex flex-col pl-2">
                                     <span className="text-[11px] font-black text-slate-400 uppercase">Stake</span>
-                                    <div className="bg-[#121212]/80 rounded px-2 py-1 text-[18px] font-black text-[#fbc02d] tabular-nums">KES {(stakes[mId || ""] || 10).toFixed(0)}</div>
+                                    <div className="bg-[#121212]/80 rounded px-2 py-1 text-[18px] font-black text-[#fbc02d] tabular-nums">{currency} {(stakes[mId || ""] || 10).toFixed(2)}</div>
                                 </div>
                             </div>
                         </div>

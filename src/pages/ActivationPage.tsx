@@ -29,12 +29,23 @@ const ActivationPage: React.FC = () => {
     };
 
     useEffect(() => {
-        if (connected) getActivationCode();
+        // 1. If already connected on mount, fetch code and request mice immediately
+        if (localSocket.connected) {
+            setConnected(true);
+            getActivationCode();
+            localSocket.emit("requestStatus", "sync");
+        }
 
-        const onConnect = () => setConnected(true);
+        const onConnect = () => {
+            setConnected(true);
+            getActivationCode();
+            localSocket.emit("requestStatus", "sync");
+        };
+
         const onDisconnect = () => {
             setConnected(false);
             setMice({});
+            setMiceIds([]);
         };
 
         const onStatus = (data: { event: string; id: string }) => {
@@ -103,14 +114,22 @@ const ActivationPage: React.FC = () => {
         localSocket.on('click', onClick);
         remoteSocket.on('deviceActivated', handleActivation);
 
+        // 2. Fallback: Ask for status again after 1 second if still no mice are found
+        const syncTimer = setTimeout(() => {
+            if (localSocket.connected && miceIds.length === 0) {
+                localSocket.emit("requestStatus", "sync");
+            }
+        }, 1000);
+
         return () => {
             localSocket.off('connect', onConnect);
             localSocket.off('disconnect', onDisconnect);
             localSocket.off('status', onStatus);
             localSocket.off('click', onClick);
             remoteSocket.off('deviceActivated', handleActivation);
+            clearTimeout(syncTimer);
         };
-    }, [connected, miceIds, navigate]);
+    }, [navigate, miceIds.length]);
 
     return (
         <div className="h-screen bg-[#0b0b0e] text-slate-200 font-sans flex flex-col overflow-hidden">
@@ -119,7 +138,6 @@ const ActivationPage: React.FC = () => {
                 .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
             `}} />
 
-            {/* Header Navigation Bar */}
             <div className="h-14 border-b border-white/5 bg-[#121117] flex items-center justify-between px-6 shrink-0 z-10">
                 <div className="flex items-center gap-3">
                     <div className="w-8 h-8 bg-red-600 rounded flex items-center justify-center shadow-[0_0_15px_rgba(225,29,72,0.4)]">
@@ -137,7 +155,6 @@ const ActivationPage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Main Activation Area */}
             <div className="flex-1 flex flex-col items-center justify-center relative p-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#1a1921] to-[#0b0b0e]">
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 pointer-events-none" />
 
@@ -168,7 +185,6 @@ const ActivationPage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Bottom Hardware Diagnostics (Matching Gameplay Layout) */}
             <div className="h-52 w-full shrink-0 bg-[#08080a] border-t border-white/10 px-6 py-4 flex flex-col overflow-hidden">
                 <div className="flex items-center gap-4 mb-3 shrink-0">
                     <div className="flex items-center gap-2">
